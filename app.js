@@ -10,7 +10,24 @@ async function count(){try{const q=await store('all');$('count').textContent=`�
 function ui(){const photo=mode==='photo';$('scanOverlay').classList.toggle('hidden',photo);$('photoOverlay').classList.toggle('hidden',!photo);$('shoot').disabled=capturing}
 function stopReader(){if(scanTimer){clearTimeout(scanTimer);scanTimer=null}try{controls?.stop()}catch{}try{reader?.reset?.()}catch{}controls=null;reader=null;detector=null}
 function stopCamera(){stopReader();for(const t of stream?.getTracks()||[])t.stop();stream=null;for(const t of $('video').srcObject?.getTracks?.()||[])t.stop();$('video').srcObject=null}
-function gotCode(raw){if(mode!=='scan')return;const s=String(raw||'').trim();if(!valid(s))return;if(last===s)hits++;else{last=s;hits=1}if(hits<2)return;code=s;mode='photo';stopReader();$('number').textContent=s;ui();setStatus('번호 확인됨. 상품 사진을 촬영하세요.');}
+let rawSeen=0, lastRaw='';
+function gotCode(raw){
+  if(mode!=='scan')return;
+  const s=String(raw||'').trim();
+  if(!s)return;
+  rawSeen++;
+  lastRaw=s;
+  // Display the actual decoded value, even when it fails the product-number rule.
+  $('number').textContent=s;
+  if(!valid(s)){
+    setStatus('바코드 감지됨 ('+rawSeen+'회). 번호 형식 확인: '+s,true);
+    return;
+  }
+  // ZXing has already decoded and checksum-validated the barcode. Do not
+  // require two separate callback invocations, which can stall on iOS Safari.
+  code=s;mode='photo';stopReader();ui();
+  setStatus('번호 확인됨. 상품 사진을 촬영하세요.');
+}
 async function loadZXing(){
   if(window.ZXingBrowser?.BrowserMultiFormatReader)return 'browser';
   if(window.ZXing?.BrowserMultiFormatReader)return 'library';
@@ -48,7 +65,9 @@ async function beginScan(){
     try{
       if(kind==='library'){
         // This UMD is the complete decoder and works with a pre-opened video.
-        reader=new window.ZXing.BrowserMultiFormatReader();
+        const hints=new Map();
+        if(window.ZXing.DecodeHintType?.TRY_HARDER!==undefined)hints.set(window.ZXing.DecodeHintType.TRY_HARDER,true);
+        reader=new window.ZXing.BrowserMultiFormatReader(hints,250);
         const current=reader;
         reader.decodeFromVideoElementContinuously($('video'),(result,error)=>{
           if(mode==='scan'&&reader===current&&result)gotCode(result.getText());
@@ -59,7 +78,7 @@ async function beginScan(){
           if(mode==='scan'&&result)gotCode(result.getText());
         });
       }
-      if(mode==='scan')setStatus('바코드를 안내선에 맞춰 주세요. 인식기 작동 중.');
+      if(mode==='scan')setStatus('판독 준비 완료. 바코드를 안내선에 맞춰 주세요. (인식 0회)');
       return;
     }catch(e){setStatus('바코드 인식기 실행 실패: '+e.message,true)}
   }
