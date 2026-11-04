@@ -1,6 +1,12 @@
 'use strict';
 const FOLDER='1uqlumXNGgQ5TfMLQBWoPluLpFNnNePn9', DB='remarket_photo_queue';
-const $=id=>document.getElementById(id), setStatus=(s,err=false)=>{$('status').textContent=s;$('status').classList.toggle('error',err)};
+const $=id=>document.getElementById(id);
+// Errors stay visible until the next explicit scan attempt; normal status updates cannot erase them.
+function showError(message){const panel=$('persistentError');panel.textContent=String(message);panel.classList.add('visible')}
+function clearError(){const panel=$('persistentError');panel.textContent='';panel.classList.remove('visible')}
+function setStatus(s,err=false){$('status').textContent=s;$('status').classList.toggle('error',err);if(err)showError(s)};
+window.addEventListener('error',e=>showError('프로그램 오류: '+(e.message||'알 수 없는 오류')));
+window.addEventListener('unhandledrejection',e=>showError('비동기 오류: '+String(e.reason?.message||e.reason||'알 수 없는 오류')));
 const valid=s=>(/^\d{9}$/.test(s)&&!s.startsWith('9'))||/^9\d{9}$/.test(s);
 const date=()=>{const d=new Date();return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`};
 let token='',email='',code='',mode='idle',stream=null,controls=null,reader=null,detector=null,scanTimer=null,last='',hits=0,capturing=false,uploading=false,completed=0;
@@ -55,7 +61,7 @@ async function loadZXing(){
   return null;
 }
 async function beginScan(){
-  stopReader();code='';last='';hits=0;mode='scan';
+  stopReader();clearError();code='';last='';hits=0;mode='scan';
   $('number').textContent='바코드를 보여 주세요';ui();
   if(!stream){try{await openCamera()}catch(e){setStatus('카메라 실행 실패: '+e.message,true);return}}
   setStatus('바코드 인식기를 준비하는 중...');
@@ -70,12 +76,12 @@ async function beginScan(){
         reader=new window.ZXing.BrowserMultiFormatReader(hints,250);
         const current=reader;
         reader.decodeFromVideoElementContinuously($('video'),(result,error)=>{
-          if(mode==='scan'&&reader===current&&result)gotCode(result.getText());
+          if(mode==='scan'&&reader===current){if(result)gotCode(result.getText());else if(error&&!/NotFoundException|ChecksumException|FormatException/i.test(error.name||''))showError('판독 오류: '+(error.message||error.name||String(error))) }
         });
       }else{
         reader=new window.ZXingBrowser.BrowserMultiFormatReader();
         controls=await reader.decodeFromVideoElement($('video'),result=>{
-          if(mode==='scan'&&result)gotCode(result.getText());
+          if(mode==='scan'){if(result)gotCode(result.getText());}
         });
       }
       if(mode==='scan')setStatus('판독 준비 완료. 바코드를 안내선에 맞춰 주세요. (인식 0회)');
@@ -89,7 +95,7 @@ async function beginScan(){
       const active=detector;
       const poll=async()=>{
         if(mode!=='scan'||detector!==active)return;
-        try{if($('video').readyState>=2){for(const x of await active.detect($('video')))gotCode(x.rawValue)}}catch{}
+        try{if($('video').readyState>=2){for(const x of await active.detect($('video')))gotCode(x.rawValue)}}catch(e){showError('기본 판독 오류: '+(e.message||String(e)))}
         if(mode==='scan'&&detector===active)scanTimer=setTimeout(poll,180);
       };
       poll();setStatus('기본 바코드 인식기로 읽는 중입니다.');return;
