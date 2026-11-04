@@ -8,42 +8,75 @@ let dbp=new Promise((resolve,reject)=>{const r=indexedDB.open(DB,1);r.onupgraden
 async function store(op,value){const db=await dbp;return new Promise((resolve,reject)=>{const tx=db.transaction('photos','readwrite'),s=tx.objectStore('photos'),r=op==='add'?s.add(value):op==='all'?s.getAll():s.delete(value);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
 async function count(){try{const q=await store('all');$('count').textContent=`완료 ${completed}장 / 대기 ${q.length}장`}catch(e){setStatus('사진 보관함 오류: '+e.message,true)}}
 function ui(){const photo=mode==='photo';$('scanOverlay').classList.toggle('hidden',photo);$('photoOverlay').classList.toggle('hidden',!photo);$('shoot').disabled=capturing}
-function stopReader(){if(scanTimer){clearTimeout(scanTimer);scanTimer=null}try{controls?.stop()}catch{}controls=null;reader=null;detector=null}
+function stopReader(){if(scanTimer){clearTimeout(scanTimer);scanTimer=null}try{controls?.stop()}catch{}try{reader?.reset?.()}catch{}controls=null;reader=null;detector=null}
 function stopCamera(){stopReader();for(const t of stream?.getTracks()||[])t.stop();stream=null;for(const t of $('video').srcObject?.getTracks?.()||[])t.stop();$('video').srcObject=null}
 function gotCode(raw){if(mode!=='scan')return;const s=String(raw||'').trim();if(!valid(s))return;if(last===s)hits++;else{last=s;hits=1}if(hits<2)return;code=s;mode='photo';stopReader();$('number').textContent=s;ui();setStatus('번호 확인됨. 상품 사진을 촬영하세요.');}
-async function loadZXing(){if(window.ZXingBrowser?.BrowserMultiFormatReader)return true;for(const url of ['https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js','https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js']){try{await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=url;script.onload=resolve;script.onerror=reject;document.head.appendChild(script)});if(window.ZXingBrowser?.BrowserMultiFormatReader)return true}catch{}}return false}
+async function loadZXing(){
+  if(window.ZXingBrowser?.BrowserMultiFormatReader)return 'browser';
+  if(window.ZXing?.BrowserMultiFormatReader)return 'library';
+  // Try multiple independently hosted UMD distributions. The previous release
+  // relied on a browser bundle path that can return 404 on some CDNs.
+  const sources=[
+    'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js',
+    'https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js',
+    'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js',
+    'https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js'
+  ];
+  for(const url of sources){
+    try{
+      await new Promise((resolve,reject)=>{
+        const el=document.createElement('script');el.src=url;el.async=true;
+        const timeout=setTimeout(()=>{el.remove();reject(Error('timeout'))},6500);
+        el.onload=()=>{clearTimeout(timeout);resolve()};
+        el.onerror=()=>{clearTimeout(timeout);reject(Error('load failed'))};
+        document.head.appendChild(el);
+      });
+      if(window.ZXing?.BrowserMultiFormatReader)return 'library';
+      if(window.ZXingBrowser?.BrowserMultiFormatReader)return 'browser';
+    }catch{}
+  }
+  return null;
+}
 async function beginScan(){
   stopReader();code='';last='';hits=0;mode='scan';
   $('number').textContent='바코드를 보여 주세요';ui();
   if(!stream){try{await openCamera()}catch(e){setStatus('카메라 실행 실패: '+e.message,true);return}}
-  setStatus('바코드를 가로 안내선에 맞춰 주세요.');
-  // iPhone Safari can expose BarcodeDetector yet return no usable results.
-  // Run ZXing as a second decoder instead of trusting that API exclusively.
+  setStatus('바코드 인식기를 준비하는 중...');
+  const kind=await loadZXing();
+  if(mode!=='scan')return;
+  if(kind){
+    try{
+      if(kind==='library'){
+        // This UMD is the complete decoder and works with a pre-opened video.
+        reader=new window.ZXing.BrowserMultiFormatReader();
+        const current=reader;
+        reader.decodeFromVideoElementContinuously($('video'),(result,error)=>{
+          if(mode==='scan'&&reader===current&&result)gotCode(result.getText());
+        });
+      }else{
+        reader=new window.ZXingBrowser.BrowserMultiFormatReader();
+        controls=await reader.decodeFromVideoElement($('video'),result=>{
+          if(mode==='scan'&&result)gotCode(result.getText());
+        });
+      }
+      if(mode==='scan')setStatus('바코드를 안내선에 맞춰 주세요. 인식기 작동 중.');
+      return;
+    }catch(e){setStatus('바코드 인식기 실행 실패: '+e.message,true)}
+  }
+  // Native detector is a fallback, not the sole decoder.
   if('BarcodeDetector' in window){
     try{
       detector=new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','upc_a','upc_e']});
-      const nativeDetector=detector;
+      const active=detector;
       const poll=async()=>{
-        if(mode!=='scan'||detector!==nativeDetector)return;
-        try{if($('video').readyState>=2){
-          const results=await nativeDetector.detect($('video'));
-          for(const x of results)gotCode(x.rawValue);
-        }}catch{}
-        if(mode==='scan'&&detector===nativeDetector)scanTimer=setTimeout(poll,180);
-      };poll();
-    }catch{detector=null}
+        if(mode!=='scan'||detector!==active)return;
+        try{if($('video').readyState>=2){for(const x of await active.detect($('video')))gotCode(x.rawValue)}}catch{}
+        if(mode==='scan'&&detector===active)scanTimer=setTimeout(poll,180);
+      };
+      poll();setStatus('기본 바코드 인식기로 읽는 중입니다.');return;
+    }catch{}
   }
-  const available=await loadZXing();
-  if(mode!=='scan')return;
-  if(!available){
-    if(!detector)setStatus('바코드 인식기 로딩 실패. 인터넷 연결을 확인해 주세요.',true);
-    else setStatus('바코드를 비춰 주세요. 보조 인식기를 불러오지 못했습니다.',true);
-    return;
-  }
-  try{
-    reader=new ZXingBrowser.BrowserMultiFormatReader();
-    controls=await reader.decodeFromVideoElement($('video'),result=>{if(result)gotCode(result.getText())});
-  }catch(e){if(!detector)setStatus('바코드 인식 시작 실패: '+e.message,true)}
+  setStatus('바코드 인식기를 불러오지 못했습니다. 인터넷 연결 후 다시 열어 주세요.',true);
 }
 async function openCamera(){if(!navigator.mediaDevices?.getUserMedia)throw Error('Safari 카메라를 사용할 수 없습니다.');stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:1706}}});$('video').srcObject=stream;await $('video').play()}
 function jpegFromCamera(){const v=$('video');if(!v.videoWidth||!v.videoHeight)throw Error('카메라 화면이 준비되지 않았습니다.');const c=$('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);return new Promise((resolve,reject)=>c.toBlob(b=>b?resolve(b):reject(Error('사진 생성 실패')),'image/jpeg',0.9))}
