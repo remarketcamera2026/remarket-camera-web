@@ -4,8 +4,27 @@ let token='',email='',code='',scanner=null,scanCount=0,last='',busy=false;
 const status=s=>$('status').textContent=s;
 const valid=s=>/^\d{9}$/.test(s)&&!s.startsWith('9') || /^9\d{9}$/.test(s);
 const date=()=>{let d=new Date();return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`};
-$('clientId').value=localStorage.getItem('remarket_client_id')||'';
-$('saveClient').onclick=()=>{localStorage.setItem('remarket_client_id',$('clientId').value.trim());status('클라이언트 ID 저장됨. 구글 로그인을 눌러 주세요.')};
+// OAuth client ID is public configuration, never store a client secret here.
+const CLIENT_KEY='remarket_client_id';
+try {
+  $('clientId').value=localStorage.getItem(CLIENT_KEY)||'';
+} catch (e) {
+  status('브라우저 저장소를 읽을 수 없습니다. 설정을 입력한 뒤 저장을 시도해 주세요.');
+}
+$('saveClient').onclick=()=>{
+  const id=$('clientId').value.trim();
+  if (!/^\d+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/.test(id)) {
+    status('클라이언트 ID 형식이 올바르지 않습니다. .apps.googleusercontent.com으로 끝나는 ID를 입력하세요.');
+    return;
+  }
+  try {
+    localStorage.setItem(CLIENT_KEY,id);
+    if(localStorage.getItem(CLIENT_KEY)!==id) throw new Error('저장 후 확인 실패');
+    status('설정 저장 완료! 새로고침해도 ID가 유지됩니다. 이제 구글 로그인을 눌러 주세요.');
+  } catch(e) {
+    status('설정 저장 실패: '+(e?.message||e)+' / 브라우저의 사이트 데이터 저장 허용 여부를 확인하세요. 현재 화면에서는 입력한 ID로 로그인을 시도할 수 있습니다.');
+  }
+};
 $('login').onclick=()=>{const id=$('clientId').value.trim();if(!id)return status('먼저 Google Cloud 웹 OAuth 클라이언트 ID를 입력해 주세요.');if(!window.google?.accounts?.oauth2)return status('구글 로그인 스크립트 로딩 실패. 인터넷 연결 확인.');google.accounts.oauth2.initTokenClient({client_id:id,scope:'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',prompt:'select_account',callback:async r=>{if(r.error)return status('로그인 오류: '+r.error);token=r.access_token;try{let res=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+token}});let u=await res.json();email=u.email||'이메일 확인 불가';$('account').textContent=email;status('구글 연결됨.');await flush()}catch(e){status('계정 확인 실패: '+e.message)}}}).requestAccessToken()};
 $('logout').onclick=()=>{if(token&&window.google?.accounts?.oauth2)google.accounts.oauth2.revoke(token,()=>{});token='';email='';$('account').textContent='로그인 전';status('연결 해제됨')};
 function onCode(raw){let s=String(raw).trim();if(!valid(s)||code)return;if(s===last)scanCount++;else{last=s;scanCount=1}if(scanCount>=2){code=s;$('number').textContent=s;$('photo').disabled=false;status('번호 확인됨. 상품 사진을 촬영하세요.');stopScan()}}
