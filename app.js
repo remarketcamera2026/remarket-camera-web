@@ -19,14 +19,14 @@ async function loadZXing(){
   const sources=[
     'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js',
     'https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js',
-    'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js',
-    'https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js'
+    'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js',
+    'https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js'
   ];
   for(const url of sources){
     try{
       await new Promise((resolve,reject)=>{
         const el=document.createElement('script');el.src=url;el.async=true;
-        const timeout=setTimeout(()=>{el.remove();reject(Error('timeout'))},6500);
+        const timeout=setTimeout(()=>{el.remove();reject(Error('timeout'))},3500);
         el.onload=()=>{clearTimeout(timeout);resolve()};
         el.onerror=()=>{clearTimeout(timeout);reject(Error('load failed'))};
         document.head.appendChild(el);
@@ -76,7 +76,7 @@ async function beginScan(){
       poll();setStatus('기본 바코드 인식기로 읽는 중입니다.');return;
     }catch{}
   }
-  setStatus('바코드 인식기를 불러오지 못했습니다. 인터넷 연결 후 다시 열어 주세요.',true);
+  setStatus('바코드 판독 라이브러리를 불러오지 못했습니다. 네트워크 자체 오류로 단정할 수 없습니다. Safari 콘텐츠 차단 및 CDN 접근을 확인하세요.',true);
 }
 async function openCamera(){if(!navigator.mediaDevices?.getUserMedia)throw Error('Safari 카메라를 사용할 수 없습니다.');stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:1706}}});$('video').srcObject=stream;await $('video').play()}
 function jpegFromCamera(){const v=$('video');if(!v.videoWidth||!v.videoHeight)throw Error('카메라 화면이 준비되지 않았습니다.');const c=$('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);return new Promise((resolve,reject)=>c.toBlob(b=>b?resolve(b):reject(Error('사진 생성 실패')),'image/jpeg',0.9))}
