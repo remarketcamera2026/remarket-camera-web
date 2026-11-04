@@ -12,11 +12,39 @@ function stopReader(){if(scanTimer){clearTimeout(scanTimer);scanTimer=null}try{c
 function stopCamera(){stopReader();for(const t of stream?.getTracks()||[])t.stop();stream=null;for(const t of $('video').srcObject?.getTracks?.()||[])t.stop();$('video').srcObject=null}
 function gotCode(raw){if(mode!=='scan')return;const s=String(raw||'').trim();if(!valid(s))return;if(last===s)hits++;else{last=s;hits=1}if(hits<2)return;code=s;mode='photo';stopReader();$('number').textContent=s;ui();setStatus('번호 확인됨. 상품 사진을 촬영하세요.');}
 async function loadZXing(){if(window.ZXingBrowser?.BrowserMultiFormatReader)return true;for(const url of ['https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js','https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js']){try{await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=url;script.onload=resolve;script.onerror=reject;document.head.appendChild(script)});if(window.ZXingBrowser?.BrowserMultiFormatReader)return true}catch{}}return false}
-async function beginScan(){stopReader();code='';last='';hits=0;mode='scan';$('number').textContent='바코드를 보여 주세요';ui();if(!stream){try{await openCamera()}catch(e){setStatus('카메라 실행 실패: '+e.message,true);return}}setStatus('바코드를 가로 안내선에 맞춰 주세요.');
-// Prefer BarcodeDetector if supported; fall back to ZXing without stopping the live camera.
-try{if('BarcodeDetector' in window){detector=new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','upc_a','upc_e']});const poll=async()=>{if(mode!=='scan'||!detector)return;try{if($('video').readyState>=2){const results=await detector.detect($('video'));for(const x of results)gotCode(x.rawValue)}}catch{}if(mode==='scan')scanTimer=setTimeout(poll,180)};poll();return}}catch{}
-if(!await loadZXing()){setStatus('바코드 인식기 로딩 실패. 인터넷 연결 후 다시 열어 주세요.',true);return}
-try{reader=new ZXingBrowser.BrowserMultiFormatReader();controls=await reader.decodeFromVideoElement($('video'),result=>{if(result)gotCode(result.getText())})}catch(e){setStatus('바코드 인식 시작 실패: '+e.message,true)} }
+async function beginScan(){
+  stopReader();code='';last='';hits=0;mode='scan';
+  $('number').textContent='바코드를 보여 주세요';ui();
+  if(!stream){try{await openCamera()}catch(e){setStatus('카메라 실행 실패: '+e.message,true);return}}
+  setStatus('바코드를 가로 안내선에 맞춰 주세요.');
+  // iPhone Safari can expose BarcodeDetector yet return no usable results.
+  // Run ZXing as a second decoder instead of trusting that API exclusively.
+  if('BarcodeDetector' in window){
+    try{
+      detector=new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','upc_a','upc_e']});
+      const nativeDetector=detector;
+      const poll=async()=>{
+        if(mode!=='scan'||detector!==nativeDetector)return;
+        try{if($('video').readyState>=2){
+          const results=await nativeDetector.detect($('video'));
+          for(const x of results)gotCode(x.rawValue);
+        }}catch{}
+        if(mode==='scan'&&detector===nativeDetector)scanTimer=setTimeout(poll,180);
+      };poll();
+    }catch{detector=null}
+  }
+  const available=await loadZXing();
+  if(mode!=='scan')return;
+  if(!available){
+    if(!detector)setStatus('바코드 인식기 로딩 실패. 인터넷 연결을 확인해 주세요.',true);
+    else setStatus('바코드를 비춰 주세요. 보조 인식기를 불러오지 못했습니다.',true);
+    return;
+  }
+  try{
+    reader=new ZXingBrowser.BrowserMultiFormatReader();
+    controls=await reader.decodeFromVideoElement($('video'),result=>{if(result)gotCode(result.getText())});
+  }catch(e){if(!detector)setStatus('바코드 인식 시작 실패: '+e.message,true)}
+}
 async function openCamera(){if(!navigator.mediaDevices?.getUserMedia)throw Error('Safari 카메라를 사용할 수 없습니다.');stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:1706}}});$('video').srcObject=stream;await $('video').play()}
 function jpegFromCamera(){const v=$('video');if(!v.videoWidth||!v.videoHeight)throw Error('카메라 화면이 준비되지 않았습니다.');const c=$('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);return new Promise((resolve,reject)=>c.toBlob(b=>b?resolve(b):reject(Error('사진 생성 실패')),'image/jpeg',0.9))}
 $('shoot').onclick=async()=>{if(mode!=='photo'||capturing||!code)return;capturing=true;ui();try{const blob=await jpegFromCamera(),name=`${date()}_${code.slice(0,6)}_${code}.jpg`;await store('add',{name,blob,account:email||null});await count();setStatus('사진 저장됨. 자동 전송 중. 같은 상품을 계속 촬영할 수 있습니다.');void flush()}catch(e){setStatus('사진 저장 실패: '+e.message,true)}finally{capturing=false;ui()}};
